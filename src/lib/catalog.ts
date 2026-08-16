@@ -39,12 +39,37 @@ export type ProductWithImages = {
 const PRODUCT_SELECT =
   "*, product_images(id, url, storage_path, sort_order)";
 
-function sortImages(rows: ProductWithImages[]) {
-  return rows.map((p) => ({
+const SIGNED_TTL = 60 * 60 * 24 * 7; // 7 days
+
+/** Sort images and turn private storage paths into signed, browser-usable URLs. */
+async function hydrate(rows: ProductWithImages[]): Promise<ProductWithImages[]> {
+  const sorted = rows.map((p) => ({
     ...p,
     product_images: [...(p.product_images ?? [])].sort((a, b) => a.sort_order - b.sort_order),
   }));
+
+  const paths = Array.from(
+    new Set(
+      sorted.flatMap((p) => p.product_images.map((i) => i.storage_path).filter((s) => !!s)),
+    ),
+  );
+  if (paths.length === 0) return sorted;
+
+  const { data } = await supabase.storage.from("product-images").createSignedUrls(paths, SIGNED_TTL);
+  const map = new Map<string, string>();
+  for (const row of data ?? []) {
+    if (row.path && row.signedUrl) map.set(row.path, row.signedUrl);
+  }
+
+  return sorted.map((p) => ({
+    ...p,
+    product_images: p.product_images.map((i) => ({
+      ...i,
+      url: map.get(i.storage_path) ?? i.url,
+    })),
+  }));
 }
+
 
 export const categoriesQuery = {
   queryKey: ["categories"],
@@ -65,7 +90,7 @@ export const productsQuery = (opts?: { includeInactive?: boolean }) => ({
     if (!opts?.includeInactive) q = q.eq("is_active", true);
     const { data, error } = await q.order("created_at", { ascending: false });
     if (error) throw error;
-    return sortImages((data ?? []) as ProductWithImages[]);
+    return hydrate((data ?? []) as ProductWithImages[]);
   },
 });
 
@@ -79,6 +104,6 @@ export const productQuery = (id: string) => ({
       .maybeSingle();
     if (error) throw error;
     if (!data) return null;
-    return sortImages([data as ProductWithImages])[0]!;
+    return (await hydrate([data as ProductWithImages]))[0]!;
   },
 });
