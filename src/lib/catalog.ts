@@ -90,7 +90,7 @@ export const productsQuery = (opts?: { includeInactive?: boolean }) => ({
     if (!opts?.includeInactive) q = q.eq("is_active", true);
     const { data, error } = await q.order("created_at", { ascending: false });
     if (error) throw error;
-    return sortImages((data ?? []) as ProductWithImages[]);
+    return hydrate((data ?? []) as ProductWithImages[]);
   },
 });
 
@@ -104,6 +104,6 @@ export const productQuery = (id: string) => ({
       .maybeSingle();
     if (error) throw error;
     if (!data) return null;
-    return sortImages([data as ProductWithImages])[0]!;
+    return (await hydrate([data as ProductWithImages]))[0]!;
   },
 });
